@@ -52,7 +52,37 @@ public class URLValidationService {
         }
         RequestBodyType type = urlConfig.getRequestBodyConfig().getType();
         switch (type) {
-            case JSON -> validateJSONBody(request, urlConfig.getRequestBodyConfig());
+            case JSON -> {
+                JSONObject json = null;
+                try {
+                    json = parseInputStreamToJSONObject(request.getInputStream());
+                } catch (IOException e) {
+                    LOGGER.error(e.getMessage(), e);
+                    throw new AppException(HttpStatus.BAD_REQUEST.value(), "Error while parsing JSON Object!");
+                }
+                validateJSONField(json, urlConfig.getRequestBodyConfig().getFields());
+                validateMandatoryRequestBodyFields(urlConfig.getRequestBodyConfig().getFields(), json);
+            }
+            default -> {
+            }
+        }
+    }
+
+    private void validateMandatoryRequestBodyFields(List<RequestBodyField> fields, JSONObject json)
+            throws AppException {
+        for (RequestBodyField field : fields) {
+            if (field.isMandatory() && json.isNull(field.getKey())) {
+                throw new AppException(HttpStatus.BAD_REQUEST.value(), field.getKey() + " is mandatory!");
+            }
+            if (field.getType() == DataType.JSON_OBJECT) {
+                validateMandatoryRequestBodyFields(field.getChildren(), json.getJSONObject(field.getKey()));
+            }
+            if (field.getType() == DataType.JSON_ARRAY_OF_OBJECT) {
+                JSONArray jsonArray = json.getJSONArray(field.getKey());
+                for (Object object : jsonArray) {
+                    validateMandatoryRequestBodyFields(field.getChildren(), (JSONObject) object);
+                }
+            }
         }
     }
 
@@ -64,10 +94,10 @@ public class URLValidationService {
             String variableValue = pathVariables.get(variableName);
 
             if (variableValue == null && !pathVariable.isOptional()) {
-                throw new IllegalArgumentException("Missing path variable: " + variableName);
+                throw new AppException(HttpStatus.BAD_REQUEST.value(), "Missing path variable: " + variableName);
             }
 
-            validateParamDataType(type, variableName, pathVariable.getRegex(), variableValue);
+            validateParamDataType(pathVariable, type, variableName, pathVariable.getRegex(), variableValue);
         }
     }
 
@@ -92,15 +122,18 @@ public class URLValidationService {
                 () -> new AppException(HttpStatus.BAD_REQUEST.value(), "Parameter " + paramName + " is not allowed!"));
         if (paramConfig.isMultiple()) {
             for (String value : values) {
-                validateParamDataType(paramConfig.getType(), paramConfig.getName(), paramConfig.getRegex(), value);
+                validateParamDataType(paramConfig, paramConfig.getType(), paramConfig.getName(), paramConfig.getRegex(),
+                        value);
             }
         } else {
-            validateParamDataType(paramConfig.getType(), paramConfig.getName(), paramConfig.getRegex(), values[0]);
+            validateParamDataType(paramConfig, paramConfig.getType(), paramConfig.getName(), paramConfig.getRegex(),
+                    values[0]);
         }
 
     }
 
-    private void validateParamDataType(DataType dataType, String name, String regex, String value) throws AppException {
+    private void validateParamDataType(Field field, DataType dataType, String name, String regex, String value)
+            throws AppException {
         switch (dataType) {
             case INTEGER -> {
                 if (!isInteger(value)) {
@@ -119,9 +152,7 @@ public class URLValidationService {
                             "Invalid boolean value for parameter: " + name);
                 }
             }
-            case STRING -> {
-                // No validation needed for strings
-            }
+            case STRING -> checkMinMax(field.getMinLength(), field.getMaxLength(), value, name);
             case REGEX -> {
                 if (!Pattern.matches(regex, value)) {
                     throw new AppException(HttpStatus.BAD_REQUEST.value(),
@@ -165,16 +196,6 @@ public class URLValidationService {
         return "true".equalsIgnoreCase(String.valueOf(value)) || "false".equalsIgnoreCase(String.valueOf(value));
     }
 
-    private void validateJSONBody(HttpServletRequest request, RequestBodyConfig requestBodyConfig) throws AppException {
-        JSONObject jsonObject = null;
-        try {
-            jsonObject = parseInputStreamToJSONObject(request.getInputStream());
-        } catch (IOException e) {
-            throw new AppException(HttpStatus.BAD_REQUEST.value(), "Invalid request body!");
-        }
-        validateJSONField(jsonObject, requestBodyConfig.getFields());
-    }
-
     private void validateJSONField(JSONObject json, List<RequestBodyField> fields) throws AppException {
         for (Object keyObj : json.keySet()) {
             String key = (String) keyObj;
@@ -197,6 +218,8 @@ public class URLValidationService {
             }, "Value for key " + key + " does not match the required pattern.");
             case JSON_OBJECT -> validateJSONInput(() -> validateJSONField(json.getJSONObject(key), field.getChildren()),
                     "Invalid JSON Object for key " + key);
+            case STRING -> checkMinMax(field.getMinLength(), field.getMaxLength(), json.getString(field.getKey()),
+                    field.getKey());
             default -> {
             }
         }
@@ -235,6 +258,11 @@ public class URLValidationService {
                     validateJSONField(jsonObject, field.getChildren());
                 }
             }, "Invalid JSON Array of objects for key " + key);
+            case JSON_ARRAY_STRING -> {
+                for (int i = 0; i < jsonArray.length(); i++) {
+                    checkMinMax(field.getMinLength(), field.getMaxLength(), jsonArray.getString(i), field.getKey());
+                }
+            }
             default -> {
             }
         }
@@ -262,6 +290,13 @@ public class URLValidationService {
     private boolean isJSONArray(RequestBodyField field) {
         return List.of(DataType.JSON_ARRAY_INT, DataType.JSON_ARRAY_LONG, DataType.JSON_ARRAY_REGEX,
                 DataType.JSON_ARRAY_STRING, DataType.JSON_ARRAY_OF_OBJECT).contains(field.getType());
+    }
+
+    private void checkMinMax(int min, int max, String fieldValue, String fieldName) throws AppException {
+        if (fieldValue == null || fieldValue.length() > max || fieldValue.length() < min) {
+            throw new AppException(HttpStatus.BAD_REQUEST.value(),
+                    fieldName + " should be greater than " + min + " and less than " + max);
+        }
     }
 
     @FunctionalInterface

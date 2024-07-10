@@ -18,5 +18,7 @@ public class URLConfig {
     private List<PathVariable> pathVariables = new ArrayList<>();
     private HttpMethod method = HttpMethod.GET;
     private RequestBodyConfig requestBodyConfig;
+    private int minLength;
+    private int maxLength = Integer.MAX_VALUE;
 
 }
