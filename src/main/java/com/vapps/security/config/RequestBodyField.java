@@ -9,7 +9,7 @@ import java.util.List;
 public class RequestBodyField implements Field {
 
     private String key;
-    private DataType type;
+    private DataType type = DataType.STRING;
     private List<RequestBodyField> children = new ArrayList<>();
     private String regex;
     private boolean isMandatory;
