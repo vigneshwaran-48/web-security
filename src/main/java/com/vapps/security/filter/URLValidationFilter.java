@@ -7,6 +7,7 @@ import com.vapps.security.config.WebSecurityConfiguration;
 import com.vapps.security.dto.ErrorResponse;
 import com.vapps.security.exception.AppException;
 import com.vapps.security.service.URLValidationService;
+import com.vapps.security.util.RequestUtil;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
+import org.springframework.web.util.UrlPathHelper;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -71,7 +73,6 @@ public class URLValidationFilter implements Filter {
 
             filterChain.doFilter(cachedBodyHttpServletRequest, servletResponse);
         } catch (AppException ex) {
-
             response.setStatus(ex.getStatus());
             response.setContentType("application/json");
             response.setCharacterEncoding("UTF-8");
@@ -79,7 +80,7 @@ public class URLValidationFilter implements Filter {
             ErrorResponse errorResponse = new ErrorResponse();
             errorResponse.setError(ex.getMessage());
             errorResponse.setStatus(ex.getStatus());
-            errorResponse.setPath(request.getServletPath());
+            errorResponse.setPath(RequestUtil.getServletPath(request));
             errorResponse.setTime(LocalDateTime.now().toString());
 
             response.getWriter().println(objectMapper.writeValueAsString(errorResponse));

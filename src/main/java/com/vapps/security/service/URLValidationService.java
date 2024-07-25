@@ -5,11 +5,13 @@ import com.vapps.security.config.*;
 import com.vapps.security.config.RequestBodyConfig.RequestBodyType;
 import com.vapps.security.exception.AppException;
 import jakarta.servlet.http.HttpServletRequest;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.TypeMismatchException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -22,6 +24,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+
+import static com.vapps.security.util.RequestUtil.getServletPath;
 
 @Service
 public class URLValidationService {
@@ -38,11 +42,12 @@ public class URLValidationService {
     private static final Logger LOGGER = LoggerFactory.getLogger(URLValidationService.class);
 
     public void validateURL(HttpServletRequest request) throws AppException {
-        URLConfig urlConfig = getConfig(request.getServletPath(), request.getMethod()).orElseThrow(
+        String servletPath = getServletPath(request);
+        URLConfig urlConfig = getConfig(servletPath, request.getMethod()).orElseThrow(
                 () -> new AppException(HttpStatus.NOT_FOUND.value(), "Oops!, URL not found!"));
         validateMandatoryParams(urlConfig, request.getParameterMap());
         validateRequestParams(urlConfig, request.getParameterMap());
-        validatePathVariables(urlConfig, request.getServletPath());
+        validatePathVariables(urlConfig, servletPath);
         validateRequestBody(urlConfig, request);
     }
 
@@ -71,14 +76,15 @@ public class URLValidationService {
     private void validateMandatoryRequestBodyFields(List<RequestBodyField> fields, JSONObject json)
             throws AppException {
         for (RequestBodyField field : fields) {
-            if (field.isMandatory() && json.isNull(field.getKey())) {
+            if (field.isMandatory() && json.get(field.getKey()) == null) {
                 throw new AppException(HttpStatus.BAD_REQUEST.value(), field.getKey() + " is mandatory!");
             }
             if (field.getType() == DataType.JSON_OBJECT) {
-                validateMandatoryRequestBodyFields(field.getChildren(), json.getJSONObject(field.getKey()));
+                validateMandatoryRequestBodyFields(field.getChildren(),
+                        checkAndGetJSONObject(json.get(field.getKey())));
             }
             if (field.getType() == DataType.JSON_ARRAY_OF_OBJECT) {
-                JSONArray jsonArray = json.getJSONArray(field.getKey());
+                JSONArray jsonArray = checkAndGetJSONArray(json.get(field.getKey()));
                 for (Object object : jsonArray) {
                     validateMandatoryRequestBodyFields(field.getChildren(), (JSONObject) object);
                 }
@@ -208,26 +214,30 @@ public class URLValidationService {
     private void validateJSONFieldType(JSONObject json, RequestBodyField field) throws AppException {
         String key = field.getKey();
         switch (field.getType()) {
-            case INTEGER -> validateJSONInput(() -> json.getInt(key), "Invalid integer value for key " + key);
-            case LONG -> validateJSONInput(() -> json.getLong(key), "Invalid long value for key " + key);
-            case BOOLEAN -> validateJSONInput(() -> json.getBoolean(key), "Invalid boolean value for key " + key);
+            case INTEGER ->
+                    validateJSONInput(() -> checkAndGetInt(json.get(key)), "Invalid integer value for key " + key);
+            case LONG -> validateJSONInput(() -> checkAndGetLong(json.get(key)), "Invalid long value for key " + key);
+            case BOOLEAN -> validateJSONInput(() -> checkAndGetBoolean(json.get(key)),
+                    "Invalid boolean value for key" + " " + key);
             case REGEX -> validateJSONInput(() -> {
-                if (!Pattern.matches(field.getRegex(), json.getString(key))) {
-                    throw new JSONException("Value not matched the required pattern!");
+                if (!Pattern.matches(field.getRegex(), checkAndGetString(json.get(key)))) {
+                    throw new IllegalArgumentException("Value not matched the required pattern!");
                 }
             }, "Value for key " + key + " does not match the required pattern.");
-            case JSON_OBJECT -> validateJSONInput(() -> validateJSONField(json.getJSONObject(key), field.getChildren()),
+            case JSON_OBJECT -> validateJSONInput(
+                    () -> validateJSONField(checkAndGetJSONObject(json.get(key)), field.getChildren()),
                     "Invalid JSON Object for key " + key);
-            case STRING -> checkMinMax(field.getMinLength(), field.getMaxLength(), json.getString(field.getKey()),
-                    field.getKey());
+            case STRING ->
+                    checkMinMax(field.getMinLength(), field.getMaxLength(), checkAndGetString(json.get(field.getKey())),
+                            field.getKey());
             default -> {
             }
         }
         if (isJSONArray(field)) {
-            if (json.optJSONArray(key) == null) {
+            if (optJSONArray(json, key) == null) {
                 throw new AppException(HttpStatus.BAD_REQUEST.value(), "Required a JSON Array for " + key);
             }
-            validateJSONArrayFieldType(json.getJSONArray(key), field);
+            validateJSONArrayFieldType(checkAndGetJSONArray(json.get(key)), field);
         }
     }
 
@@ -235,32 +245,33 @@ public class URLValidationService {
         String key = field.getKey();
         switch (field.getType()) {
             case JSON_ARRAY_INT -> validateJSONInput(() -> {
-                for (int i = 0; i < jsonArray.length(); i++) {
-                    jsonArray.getInt(i);
+                for (int i = 0; i < jsonArray.size(); i++) {
+                    checkAndGetInt(jsonArray.get(i));
                 }
             }, "Invalid JSON Array of integer for key " + key);
             case JSON_ARRAY_LONG -> validateJSONInput(() -> {
-                for (int i = 0; i < jsonArray.length(); i++) {
-                    jsonArray.getLong(i);
+                for (int i = 0; i < jsonArray.size(); i++) {
+                    checkAndGetLong(jsonArray.get(i));
                 }
             }, "Invalid JSON Array of long for key " + key);
             case JSON_ARRAY_REGEX -> validateJSONInput(() -> {
-                for (int i = 0; i < jsonArray.length(); i++) {
-                    String value = jsonArray.getString(i);
+                for (int i = 0; i < jsonArray.size(); i++) {
+                    String value = checkAndGetString(jsonArray.get(i));
                     if (!Pattern.matches(field.getRegex(), value)) {
-                        throw new JSONException("Value not matched the required pattern!");
+                        throw new IllegalArgumentException("Value not matched the required pattern!");
                     }
                 }
             }, "Invalid JSON Array of the required pattern for key " + key);
             case JSON_ARRAY_OF_OBJECT -> validateJSONInput(() -> {
-                for (int i = 0; i < jsonArray.length(); i++) {
-                    JSONObject jsonObject = jsonArray.getJSONObject(i);
+                for (int i = 0; i < jsonArray.size(); i++) {
+                    JSONObject jsonObject = checkAndGetJSONObject(jsonArray.get(i));
                     validateJSONField(jsonObject, field.getChildren());
                 }
             }, "Invalid JSON Array of objects for key " + key);
             case JSON_ARRAY_STRING -> {
-                for (int i = 0; i < jsonArray.length(); i++) {
-                    checkMinMax(field.getMinLength(), field.getMaxLength(), jsonArray.getString(i), field.getKey());
+                for (int i = 0; i < jsonArray.size(); i++) {
+                    checkMinMax(field.getMinLength(), field.getMaxLength(), checkAndGetString(jsonArray.get(i)),
+                            field.getKey());
                 }
             }
             default -> {
@@ -272,8 +283,8 @@ public class URLValidationService {
         try {
             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
             String jsonText = reader.lines().collect(Collectors.joining("\n"));
-            return new JSONObject(jsonText);
-        } catch (JSONException ex) {
+            return (JSONObject) new JSONParser().parse(jsonText);
+        } catch (ParseException ex) {
             throw new AppException(HttpStatus.BAD_REQUEST.value(), "Invalid request body! Required a JSON object.");
         }
     }
@@ -281,7 +292,7 @@ public class URLValidationService {
     private void validateJSONInput(JSONInputValidator validator, String errorMessage) throws AppException {
         try {
             validator.validate();
-        } catch (JSONException ex) {
+        } catch (Exception ex) {
             LOGGER.error(ex.getMessage());
             throw new AppException(HttpStatus.BAD_REQUEST.value(), errorMessage);
         }
@@ -302,5 +313,49 @@ public class URLValidationService {
     @FunctionalInterface
     private interface JSONInputValidator {
         void validate() throws AppException;
+    }
+
+    private int checkAndGetInt(Object value) {
+        return Integer.parseInt(String.valueOf(value));
+    }
+
+    private long checkAndGetLong(Object value) {
+        return Long.parseLong(String.valueOf(value));
+    }
+
+    private boolean checkAndGetBoolean(Object value) {
+        if (value == null || (!value.equals("false") && !value.equals("true"))) {
+            throw new IllegalArgumentException("Invalid boolean value => " + value);
+        }
+        return Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    private String checkAndGetString(Object value) {
+        if (value == null) {
+            throw new IllegalArgumentException("Null value for string!");
+        }
+        return String.valueOf(value);
+    }
+
+    private JSONObject checkAndGetJSONObject(Object value) {
+        if (value == null) {
+            throw new IllegalArgumentException("Null value for JSONObject!");
+        }
+        return (JSONObject) value;
+    }
+
+    private JSONArray checkAndGetJSONArray(Object value) {
+        if (value == null) {
+            throw new IllegalArgumentException("Null value for JSONArray!");
+        }
+        return (JSONArray) value;
+    }
+
+    private JSONArray optJSONArray(JSONObject json, String key) {
+        Object value = json.get(key);
+        if (value == null || !(value instanceof JSONArray)) {
+            return null;
+        }
+        return (JSONArray) value;
     }
 }
