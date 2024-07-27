@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.vapps.security.config.*;
 import com.vapps.security.config.RequestBodyConfig.RequestBodyType;
 import com.vapps.security.exception.AppException;
+import com.vapps.security.exception.NullValueException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
@@ -11,7 +12,6 @@ import org.json.simple.parser.JSONParser;
 import org.json.simple.parser.ParseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.TypeMismatchException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -213,68 +213,82 @@ public class URLValidationService {
 
     private void validateJSONFieldType(JSONObject json, RequestBodyField field) throws AppException {
         String key = field.getKey();
-        switch (field.getType()) {
-            case INTEGER ->
-                    validateJSONInput(() -> checkAndGetInt(json.get(key)), "Invalid integer value for key " + key);
-            case LONG -> validateJSONInput(() -> checkAndGetLong(json.get(key)), "Invalid long value for key " + key);
-            case BOOLEAN -> validateJSONInput(() -> checkAndGetBoolean(json.get(key)),
-                    "Invalid boolean value for key" + " " + key);
-            case REGEX -> validateJSONInput(() -> {
-                if (!Pattern.matches(field.getRegex(), checkAndGetString(json.get(key)))) {
-                    throw new IllegalArgumentException("Value not matched the required pattern!");
+        try {
+            switch (field.getType()) {
+                case INTEGER ->
+                        validateJSONInput(() -> checkAndGetInt(json.get(key)), "Invalid integer value for key " + key);
+                case LONG ->
+                        validateJSONInput(() -> checkAndGetLong(json.get(key)), "Invalid long value for key " + key);
+                case BOOLEAN -> validateJSONInput(() -> checkAndGetBoolean(json.get(key)),
+                        "Invalid boolean value for key" + " " + key);
+                case REGEX -> validateJSONInput(() -> {
+                    if (!Pattern.matches(field.getRegex(), checkAndGetString(json.get(key)))) {
+                        throw new AppException(HttpStatus.BAD_REQUEST.value(),
+                                "Value not matched the required pattern!");
+                    }
+                }, "Value for key " + key + " does not match the required pattern.");
+                case JSON_OBJECT -> validateJSONInput(
+                        () -> validateJSONField(checkAndGetJSONObject(json.get(key)), field.getChildren()),
+                        "Invalid JSON Object for key " + key);
+                case STRING -> checkMinMax(field.getMinLength(), field.getMaxLength(),
+                        checkAndGetString(json.get(field.getKey())), field.getKey());
+                default -> {
                 }
-            }, "Value for key " + key + " does not match the required pattern.");
-            case JSON_OBJECT -> validateJSONInput(
-                    () -> validateJSONField(checkAndGetJSONObject(json.get(key)), field.getChildren()),
-                    "Invalid JSON Object for key " + key);
-            case STRING ->
-                    checkMinMax(field.getMinLength(), field.getMaxLength(), checkAndGetString(json.get(field.getKey())),
-                            field.getKey());
-            default -> {
             }
-        }
-        if (isJSONArray(field)) {
-            if (optJSONArray(json, key) == null) {
-                throw new AppException(HttpStatus.BAD_REQUEST.value(), "Required a JSON Array for " + key);
+            if (isJSONArray(field)) {
+                if (optJSONArray(json, key) == null) {
+                    throw new AppException(HttpStatus.BAD_REQUEST.value(), "Required a JSON Array for " + key);
+                }
+                validateJSONArrayFieldType(checkAndGetJSONArray(json.get(key)), field);
             }
-            validateJSONArrayFieldType(checkAndGetJSONArray(json.get(key)), field);
+        } catch (NullValueException e) {
+            if (field.isMandatory()) {
+                throw new AppException(e.getStatus(), "Null value given for " + key);
+            }
         }
     }
 
     private void validateJSONArrayFieldType(JSONArray jsonArray, RequestBodyField field) throws AppException {
         String key = field.getKey();
-        switch (field.getType()) {
-            case JSON_ARRAY_INT -> validateJSONInput(() -> {
-                for (int i = 0; i < jsonArray.size(); i++) {
-                    checkAndGetInt(jsonArray.get(i));
-                }
-            }, "Invalid JSON Array of integer for key " + key);
-            case JSON_ARRAY_LONG -> validateJSONInput(() -> {
-                for (int i = 0; i < jsonArray.size(); i++) {
-                    checkAndGetLong(jsonArray.get(i));
-                }
-            }, "Invalid JSON Array of long for key " + key);
-            case JSON_ARRAY_REGEX -> validateJSONInput(() -> {
-                for (int i = 0; i < jsonArray.size(); i++) {
-                    String value = checkAndGetString(jsonArray.get(i));
-                    if (!Pattern.matches(field.getRegex(), value)) {
-                        throw new IllegalArgumentException("Value not matched the required pattern!");
+        try {
+            switch (field.getType()) {
+                case JSON_ARRAY_INT -> validateJSONInput(() -> {
+                    for (int i = 0; i < jsonArray.size(); i++) {
+                        checkAndGetInt(jsonArray.get(i));
+                    }
+                }, "Invalid JSON Array of integer for key " + key);
+                case JSON_ARRAY_LONG -> validateJSONInput(() -> {
+                    for (int i = 0; i < jsonArray.size(); i++) {
+                        checkAndGetLong(jsonArray.get(i));
+                    }
+                }, "Invalid JSON Array of long for key " + key);
+                case JSON_ARRAY_REGEX -> validateJSONInput(() -> {
+                    for (int i = 0; i < jsonArray.size(); i++) {
+                        String value = checkAndGetString(jsonArray.get(i));
+                        if (!Pattern.matches(field.getRegex(), value)) {
+                            throw new AppException(HttpStatus.BAD_REQUEST.value(),
+                                    "Value not matched the required " + "pattern!");
+                        }
+                    }
+                }, "Invalid JSON Array of the required pattern for key " + key);
+                case JSON_ARRAY_OF_OBJECT -> validateJSONInput(() -> {
+                    for (int i = 0; i < jsonArray.size(); i++) {
+                        JSONObject jsonObject = checkAndGetJSONObject(jsonArray.get(i));
+                        validateJSONField(jsonObject, field.getChildren());
+                    }
+                }, "Invalid JSON Array of objects for key " + key);
+                case JSON_ARRAY_STRING -> {
+                    for (int i = 0; i < jsonArray.size(); i++) {
+                        checkMinMax(field.getMinLength(), field.getMaxLength(), checkAndGetString(jsonArray.get(i)),
+                                field.getKey());
                     }
                 }
-            }, "Invalid JSON Array of the required pattern for key " + key);
-            case JSON_ARRAY_OF_OBJECT -> validateJSONInput(() -> {
-                for (int i = 0; i < jsonArray.size(); i++) {
-                    JSONObject jsonObject = checkAndGetJSONObject(jsonArray.get(i));
-                    validateJSONField(jsonObject, field.getChildren());
-                }
-            }, "Invalid JSON Array of objects for key " + key);
-            case JSON_ARRAY_STRING -> {
-                for (int i = 0; i < jsonArray.size(); i++) {
-                    checkMinMax(field.getMinLength(), field.getMaxLength(), checkAndGetString(jsonArray.get(i)),
-                            field.getKey());
+                default -> {
                 }
             }
-            default -> {
+        } catch (NullValueException e) {
+            if (field.isMandatory()) {
+                throw new AppException(e.getStatus(), "Null value given for " + key);
             }
         }
     }
@@ -323,30 +337,30 @@ public class URLValidationService {
         return Long.parseLong(String.valueOf(value));
     }
 
-    private boolean checkAndGetBoolean(Object value) {
+    private boolean checkAndGetBoolean(Object value) throws AppException {
         if (value == null || (!value.equals("false") && !value.equals("true"))) {
-            throw new IllegalArgumentException("Invalid boolean value => " + value);
+            throw new NullValueException(HttpStatus.BAD_REQUEST.value(), "Invalid boolean value => " + value);
         }
         return Boolean.parseBoolean(String.valueOf(value));
     }
 
-    private String checkAndGetString(Object value) {
+    private String checkAndGetString(Object value) throws AppException {
         if (value == null) {
-            throw new IllegalArgumentException("Null value for string!");
+            throw new NullValueException(HttpStatus.BAD_REQUEST.value(), "Null value for string!");
         }
         return String.valueOf(value);
     }
 
-    private JSONObject checkAndGetJSONObject(Object value) {
+    private JSONObject checkAndGetJSONObject(Object value) throws AppException {
         if (value == null) {
-            throw new IllegalArgumentException("Null value for JSONObject!");
+            throw new NullValueException(HttpStatus.BAD_REQUEST.value(), "Null value for JSONObject!");
         }
         return (JSONObject) value;
     }
 
-    private JSONArray checkAndGetJSONArray(Object value) {
+    private JSONArray checkAndGetJSONArray(Object value) throws AppException {
         if (value == null) {
-            throw new IllegalArgumentException("Null value for JSONArray!");
+            throw new NullValueException(HttpStatus.BAD_REQUEST.value(), "Null value for JSONArray!");
         }
         return (JSONArray) value;
     }

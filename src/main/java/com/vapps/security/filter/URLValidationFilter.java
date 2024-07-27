@@ -62,7 +62,6 @@ public class URLValidationFilter implements Filter {
         HttpServletRequest request = (HttpServletRequest) servletRequest;
         HttpServletResponse response = (HttpServletResponse) servletResponse;
         try {
-            LOGGER.info("Intercepting request {} for validation", request.getServletPath());
             /**
              * Using a cached request because if I use the InputStream directly from the request and pass the
              * same request the Filter chain. Then when SpringBoot try to read the InputStream it will get
