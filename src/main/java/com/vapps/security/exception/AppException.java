@@ -6,7 +6,7 @@ import org.springframework.http.HttpStatus;
 @Getter
 public class AppException extends Exception {
 
-    private final int status;
+    protected int status;
 
     public AppException() {
         super("Internal Server Error");
