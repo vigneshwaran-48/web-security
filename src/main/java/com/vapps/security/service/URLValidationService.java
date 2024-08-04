@@ -146,10 +146,20 @@ public class URLValidationService {
                     throw new AppException(HttpStatus.BAD_REQUEST.value(),
                             "Invalid integer value for parameter: " + name);
                 }
+                int intValue = Integer.parseInt(value);
+                if (intValue < field.getMinLength() || intValue > field.getMaxLength()) {
+                    throw new AppException(HttpStatus.BAD_REQUEST.value(),
+                            "Param " + name + " should be between " + field.getMinLength() + " and " + field.getMaxLength());
+                }
             }
             case LONG -> {
                 if (!isLong(value)) {
                     throw new AppException(HttpStatus.BAD_REQUEST.value(), "Invalid long value for parameter: " + name);
+                }
+                long longValue = Long.parseLong(value);
+                if (longValue < field.getMinLength() || longValue > field.getMaxLength()) {
+                    throw new AppException(HttpStatus.BAD_REQUEST.value(),
+                            "Param " + name + " should be between " + field.getMinLength() + " and " + field.getMaxLength());
                 }
             }
             case BOOLEAN -> {
@@ -171,9 +181,29 @@ public class URLValidationService {
     }
 
     private Optional<URLConfig> getConfig(String path, String method) {
-        return securityConfiguration.getUrlConfigs().stream()
+        List<URLConfig> configs = securityConfiguration.getUrlConfigs().stream()
                 .filter(config -> antPathMatcher.match(config.getPath(), path) && config.getMethod()
-                        .matches(method.toUpperCase())).findFirst();
+                        .matches(method.toUpperCase())).toList();
+        if (configs.isEmpty()) {
+            return Optional.empty();
+        }
+        if (configs.size() > 1) {
+            /**
+             *
+             * If there are more configs present for same path and method it can be due to the below case
+             * One path can be /api/family/{familyId} and other can be /api/family/search
+             * Now for /api/family/search the /api/family/{familyId} path will also be valid according to the
+             * antPathMatcher. So iterating once again the result if any path matched exactly without the antPathMatcher
+             * itself then returning it.
+             *
+             */
+            for (URLConfig urlConfig : configs) {
+                if (urlConfig.getPath().equals(path)) {
+                    return Optional.of(urlConfig);
+                }
+            }
+        }
+        return Optional.of(configs.get(0));
     }
 
     private Optional<URLParamConfig> getParamConfig(URLConfig urlConfig, String paramName) {
