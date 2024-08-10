@@ -31,7 +31,9 @@ public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
              * Parsing it now will be stored in a collection in the request object which can be later used by
              * spring boot or our application itself.
              */
-            request.getParts();
+            if (isMultipart(request)) {
+                request.getParts();
+            }
         } catch (ServletException e) {
             LOGGER.error(e.getMessage(), e);
         }
@@ -48,6 +50,10 @@ public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
     public BufferedReader getReader() throws IOException {
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(this.cachedBody);
         return new BufferedReader(new InputStreamReader(byteArrayInputStream, getCharacterEncoding()));
+    }
+
+    private boolean isMultipart(HttpServletRequest request) {
+        return request.getContentType() != null && request.getContentType().startsWith("multipart/form-data");
     }
 
     private static class CachedBodyServletInputStream extends ServletInputStream {
