@@ -1,9 +1,13 @@
 package com.vapps.security.filter;
 
 import jakarta.servlet.ReadListener;
+import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletInputStream;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletRequestWrapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.*;
 
 /**
@@ -13,8 +17,24 @@ public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
 
     private byte[] cachedBody;
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(CachedBodyHttpServletRequest.class);
+
     public CachedBodyHttpServletRequest(HttpServletRequest request) throws IOException {
         super(request);
+        try {
+            /**
+             * Calling this method to populate the parts data before I read the input stream for caching.
+             *
+             * If we not call this method then when spring boot calls the getParts on this request, Tomcat's Request
+             * will not be able to parse the parts because it won't have the input stream at that time.
+             *
+             * Parsing it now will be stored in a collection in the request object which can be later used by
+             * spring boot or our application itself.
+             */
+            request.getParts();
+        } catch (ServletException e) {
+            LOGGER.error(e.getMessage(), e);
+        }
         InputStream requestInputStream = request.getInputStream();
         this.cachedBody = requestInputStream.readAllBytes();
     }
