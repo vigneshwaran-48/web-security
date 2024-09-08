@@ -39,6 +39,9 @@ public class URLValidationService {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private RequestBodyValidationService requestBodyValidationService;
+
     private static final Logger LOGGER = LoggerFactory.getLogger(URLValidationService.class);
 
     public void validateURL(HttpServletRequest request) throws AppException {
@@ -68,6 +71,7 @@ public class URLValidationService {
                 validateJSONField(json, urlConfig.getRequestBodyConfig().getFields());
                 validateMandatoryRequestBodyFields(urlConfig.getRequestBodyConfig().getFields(), json);
             }
+            case FORM_DATA -> requestBodyValidationService.handleFormData(request, urlConfig.getRequestBodyConfig());
             default -> {
             }
         }
